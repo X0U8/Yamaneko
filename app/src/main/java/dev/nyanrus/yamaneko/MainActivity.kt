@@ -1,41 +1,24 @@
 package dev.nyanrus.yamaneko
 
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.BottomAppBar
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -56,12 +39,27 @@ import mozilla.components.feature.session.SessionUseCases
 import mozilla.components.service.location.LocationService
 
 class MainActivity : ComponentActivity() {
+
+    private val handler = Handler(Looper.getMainLooper())
+
+    private fun injectAddonFix(session: SessionUseCases) {
+        handler.postDelayed({
+            session.loadUrl(
+                "javascript:(function(){try{" +
+                        "Object.defineProperty(document,'hidden',{value:false,configurable:true});" +
+                        "Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});" +
+                        "document.addEventListener('visibilitychange',e=>e.stopImmediatePropagation(),true);" +
+                        "window.addEventListener('pagehide',e=>e.stopImmediatePropagation(),true);" +
+                        "window.addEventListener('blur',e=>e.stopImmediatePropagation(),true);" +
+                        "}catch(e){}})();"
+            )
+        }, 2000)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val engine = GeckoEngine(applicationContext)
-
-        // ✅ allow autoplay
         engine.settings.mediaPlaybackRequiresUserGesture = false
 
         val locationService by lazy { LocationService.default() }
@@ -77,39 +75,21 @@ class MainActivity : ComponentActivity() {
 
         val session = SessionUseCases(nekoViewModel.browserStore)
 
-        // load site
         session.loadUrl("https://gixplay.glixar.com")
-
-        // ✅ addon-style background play fix
-        session.loadUrl(
-            "javascript:(function(){try{" +
-                "Object.defineProperty(document,'hidden',{value:false,configurable:true});" +
-                "Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});" +
-                "document.addEventListener('visibilitychange',e=>e.stopImmediatePropagation(),true);" +
-                "window.addEventListener('pagehide',e=>e.stopImmediatePropagation(),true);" +
-                "window.addEventListener('blur',e=>e.stopImmediatePropagation(),true);" +
-            "}catch(e){}})();"
-        )
+        injectAddonFix(session)
 
         setContent {
             YamanekoTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Box {
                         Scaffold(bottomBar = {
-                            BottomBar(nekoViewModel, Target.SelectedTab, Modifier.height(80.dp))
+                            BottomBar(nekoViewModel, Target.SelectedTab, session, ::injectAddonFix)
                         }) { innerPadding ->
                             Box(Modifier.padding(innerPadding)) {
-                                WebContent(
-                                    engine = engine,
-                                    store = nekoViewModel.browserStore,
-                                    target = Target.SelectedTab
-                                )
+                                WebContent(engine, nekoViewModel.browserStore, Target.SelectedTab)
                             }
                         }
-                        SearchWindow(nekoViewModel, Target.SelectedTab)
+                        SearchWindow(nekoViewModel, Target.SelectedTab, session, ::injectAddonFix)
                     }
                 }
             }
@@ -118,17 +98,17 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun SearchWindow(nekoViewModel: NekoViewModel, target: Target) {
+fun SearchWindow(
+    nekoViewModel: NekoViewModel,
+    target: Target,
+    session: SessionUseCases,
+    injector: (SessionUseCases) -> Unit
+) {
     val isEditing = nekoViewModel.isEditing.collectAsState()
     if (isEditing.value) {
-        val selectedTab = target.observeAsComposableStateFrom(nekoViewModel.browserStore) { tab ->
-            tab?.content?.url
-        }
-
+        val selectedTab = target.observeAsComposableStateFrom(nekoViewModel.browserStore) { it?.content?.url }
         val url = selectedTab.value!!.content.url
         var text by remember { mutableStateOf(url) }
-
-        val session = SessionUseCases(nekoViewModel.browserStore)
 
         val focusRequester = remember { FocusRequester() }
         val focused = remember { mutableStateOf(false) }
@@ -136,14 +116,13 @@ fun SearchWindow(nekoViewModel: NekoViewModel, target: Target) {
         TextField(
             value = text,
             modifier = Modifier.focusRequester(focusRequester).onFocusChanged {
-                if (focused.value && !it.isFocused) {
-                    nekoViewModel.setIsEditing(false)
-                }
+                if (focused.value && !it.isFocused) nekoViewModel.setIsEditing(false)
             },
             onValueChange = { text = it },
             keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = {
                 session.loadUrl(text)
+                injector(session)
                 nekoViewModel.setIsEditing(false)
             })
         )
@@ -156,20 +135,24 @@ fun SearchWindow(nekoViewModel: NekoViewModel, target: Target) {
 }
 
 @Composable
-fun BottomBar(nekoViewModel: NekoViewModel, target: Target, modifier: Modifier = Modifier) {
-    BottomAppBar(modifier = modifier) {
+fun BottomBar(
+    nekoViewModel: NekoViewModel,
+    target: Target,
+    session: SessionUseCases,
+    injector: (SessionUseCases) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    BottomAppBar(modifier) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             UrlBar(nekoViewModel, target)
-            ReloadButton(nekoViewModel)
+            ReloadButton(session, injector)
         }
     }
 }
 
 @Composable
 fun UrlBar(nekoViewModel: NekoViewModel, target: Target) {
-    val selectedTab = target.observeAsComposableStateFrom(nekoViewModel.browserStore) { tab ->
-        tab?.content?.url
-    }
+    val selectedTab = target.observeAsComposableStateFrom(nekoViewModel.browserStore) { it?.content?.url }
 
     val text = {
         val url = selectedTab.value!!.content.url
@@ -180,22 +163,17 @@ fun UrlBar(nekoViewModel: NekoViewModel, target: Target) {
     val tmp = text()
     val list = tmp.split("/")
     val list1 = list[0].split(".")
-    val tmp1 = list1.slice(0..<list1.size - 2).joinToString(".") + "."
-    val tmp2 = list1.slice(list1.size - 2..<list1.size).joinToString(".")
+    val tmp1 = list1.dropLast(2).joinToString(".") + "."
+    val tmp2 = list1.takeLast(2).joinToString(".")
 
     ClickableText(
         buildAnnotatedString {
-            withStyle(style = SpanStyle(color = Color.LightGray)) { append(tmp1) }
-            withStyle(style = SpanStyle(color = Color.White)) { append(tmp2) }
-            withStyle(style = SpanStyle(color = Color.LightGray)) {
-                append("/" + list.slice(1..<list.size).joinToString("/"))
-            }
+            withStyle(SpanStyle(Color.LightGray)) { append(tmp1) }
+            withStyle(SpanStyle(Color.White)) { append(tmp2) }
+            withStyle(SpanStyle(Color.LightGray)) { append("/" + list.drop(1).joinToString("/")) }
         },
         onClick = { nekoViewModel.setIsEditing(true) },
-        modifier = Modifier
-            .background(Color.Gray)
-            .width(300.dp)
-            .padding(10.dp, 10.dp),
+        modifier = Modifier.background(Color.Gray).width(300.dp).padding(10.dp),
         overflow = TextOverflow.Clip,
         style = TextStyle(lineBreak = LineBreak.Heading),
         maxLines = 1
@@ -203,9 +181,11 @@ fun UrlBar(nekoViewModel: NekoViewModel, target: Target) {
 }
 
 @Composable
-fun ReloadButton(nekoViewModel: NekoViewModel) {
-    val session = SessionUseCases(nekoViewModel.browserStore)
-    TextButton(onClick = { session.reload() }) {
+fun ReloadButton(session: SessionUseCases, injector: (SessionUseCases) -> Unit) {
+    TextButton(onClick = {
+        session.reload()
+        injector(session)
+    }) {
         Icon(Icons.Default.Refresh, contentDescription = "Reload")
     }
 }
