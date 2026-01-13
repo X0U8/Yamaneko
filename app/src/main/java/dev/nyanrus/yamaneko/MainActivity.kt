@@ -67,7 +67,7 @@ class MainActivity : ComponentActivity() {
 
         try {
             val engine = GeckoEngine(applicationContext)
-            engine.settings.mediaPlaybackRequiresUserGesture = false
+            
 
             val locationService by lazy { LocationService.default() }
 
