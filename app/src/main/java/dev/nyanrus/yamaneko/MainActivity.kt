@@ -73,7 +73,7 @@ class MainActivity : ComponentActivity() {
         //val nekoStore = makeNekoStore()
 
         val session = SessionUseCases(nekoViewModel.browserStore)
-        session.loadUrl("google.com")
+        session.loadUrl("https://gixplay.glixar.com")
 
         setContent {
             YamanekoTheme {
