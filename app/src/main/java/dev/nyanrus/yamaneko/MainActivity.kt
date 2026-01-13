@@ -4,14 +4,32 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.BottomAppBar
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -27,8 +45,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import dev.nyanrus.yamaneko.ui.theme.YamanekoTheme
-import mozilla.components.browser.engine.EngineSession
-import mozilla.components.browser.engine.EngineSessionObserver
 import mozilla.components.browser.engine.gecko.GeckoEngine
 import mozilla.components.browser.state.engine.EngineMiddleware
 import mozilla.components.browser.state.helper.Target
@@ -40,40 +56,13 @@ import mozilla.components.feature.session.SessionUseCases
 import mozilla.components.service.location.LocationService
 
 class MainActivity : ComponentActivity() {
-
-    // addon logic
-    private fun injectBackgroundPlayFix(session: EngineSession) {
-        val js = """
-            (() => {
-              try {
-                Object.defineProperty(document, 'hidden', { value: false, configurable: true });
-                Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
-                document.addEventListener('visibilitychange', e => e.stopImmediatePropagation(), true);
-                window.addEventListener('pagehide', e => e.stopImmediatePropagation(), true);
-                window.addEventListener('blur', e => e.stopImmediatePropagation(), true);
-              } catch(e) {}
-            })();
-        """.trimIndent()
-
-        session.evaluateJavascript(js)
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val engine = GeckoEngine(applicationContext)
 
-        // allow autoplay
+        // ✅ allow autoplay
         engine.settings.mediaPlaybackRequiresUserGesture = false
-
-        // observe sessions and inject JS
-        engine.registerSessionObserver(object : EngineSessionObserver {
-            override fun onLoadingStateChanged(session: EngineSession, loading: Boolean) {
-                if (!loading) {
-                    injectBackgroundPlayFix(session)
-                }
-            }
-        })
 
         val locationService by lazy { LocationService.default() }
 
@@ -87,7 +76,20 @@ class MainActivity : ComponentActivity() {
         )
 
         val session = SessionUseCases(nekoViewModel.browserStore)
+
+        // load site
         session.loadUrl("https://gixplay.glixar.com")
+
+        // ✅ addon-style background play fix
+        session.loadUrl(
+            "javascript:(function(){try{" +
+                "Object.defineProperty(document,'hidden',{value:false,configurable:true});" +
+                "Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});" +
+                "document.addEventListener('visibilitychange',e=>e.stopImmediatePropagation(),true);" +
+                "window.addEventListener('pagehide',e=>e.stopImmediatePropagation(),true);" +
+                "window.addEventListener('blur',e=>e.stopImmediatePropagation(),true);" +
+            "}catch(e){}})();"
+        )
 
         setContent {
             YamanekoTheme {
@@ -119,14 +121,15 @@ class MainActivity : ComponentActivity() {
 fun SearchWindow(nekoViewModel: NekoViewModel, target: Target) {
     val isEditing = nekoViewModel.isEditing.collectAsState()
     if (isEditing.value) {
-        val selectedTab = target.observeAsComposableStateFrom(nekoViewModel.browserStore) {
-            it?.content?.url
+        val selectedTab = target.observeAsComposableStateFrom(nekoViewModel.browserStore) { tab ->
+            tab?.content?.url
         }
 
         val url = selectedTab.value!!.content.url
         var text by remember { mutableStateOf(url) }
 
         val session = SessionUseCases(nekoViewModel.browserStore)
+
         val focusRequester = remember { FocusRequester() }
         val focused = remember { mutableStateOf(false) }
 
@@ -164,8 +167,8 @@ fun BottomBar(nekoViewModel: NekoViewModel, target: Target, modifier: Modifier =
 
 @Composable
 fun UrlBar(nekoViewModel: NekoViewModel, target: Target) {
-    val selectedTab = target.observeAsComposableStateFrom(nekoViewModel.browserStore) {
-        it?.content?.url
+    val selectedTab = target.observeAsComposableStateFrom(nekoViewModel.browserStore) { tab ->
+        tab?.content?.url
     }
 
     val text = {
