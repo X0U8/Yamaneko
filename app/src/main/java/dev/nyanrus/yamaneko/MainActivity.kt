@@ -19,13 +19,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.*
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import dev.nyanrus.yamaneko.ui.theme.YamanekoTheme
 import mozilla.components.browser.engine.gecko.GeckoEngine
@@ -41,59 +38,91 @@ import mozilla.components.service.location.LocationService
 class MainActivity : ComponentActivity() {
 
     private val handler = Handler(Looper.getMainLooper())
+    private var errorText by mutableStateOf<String?>(null)
 
     private fun injectAddonFix(session: SessionUseCases) {
-        handler.postDelayed({
-            session.loadUrl(
-                "javascript:(function(){try{" +
-                        "Object.defineProperty(document,'hidden',{value:false,configurable:true});" +
-                        "Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});" +
-                        "document.addEventListener('visibilitychange',e=>e.stopImmediatePropagation(),true);" +
-                        "window.addEventListener('pagehide',e=>e.stopImmediatePropagation(),true);" +
-                        "window.addEventListener('blur',e=>e.stopImmediatePropagation(),true);" +
-                        "}catch(e){}})();"
-            )
-        }, 2000)
+        try {
+            handler.postDelayed({
+                try {
+                    session.loadUrl(
+                        "javascript:(function(){try{" +
+                                "Object.defineProperty(document,'hidden',{value:false,configurable:true});" +
+                                "Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});" +
+                                "document.addEventListener('visibilitychange',e=>e.stopImmediatePropagation(),true);" +
+                                "window.addEventListener('pagehide',e=>e.stopImmediatePropagation(),true);" +
+                                "window.addEventListener('blur',e=>e.stopImmediatePropagation(),true);" +
+                                "}catch(e){console.log(e)}})();"
+                    )
+                } catch (e: Exception) {
+                    errorText = "JS Inject error: ${e.message}"
+                }
+            }, 2000)
+        } catch (e: Exception) {
+            errorText = "Handler error: ${e.message}"
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val engine = GeckoEngine(applicationContext)
-        engine.settings.mediaPlaybackRequiresUserGesture = false
+        try {
+            val engine = GeckoEngine(applicationContext)
+            engine.settings.mediaPlaybackRequiresUserGesture = false
 
-        val locationService by lazy { LocationService.default() }
+            val locationService by lazy { LocationService.default() }
 
-        val nekoViewModel = NekoViewModel(
-            BrowserStore(
-                middleware = listOf(
-                    RegionMiddleware(applicationContext, locationService),
-                    SearchMiddleware(applicationContext),
-                ) + EngineMiddleware.create(engine),
+            val nekoViewModel = NekoViewModel(
+                BrowserStore(
+                    middleware = listOf(
+                        RegionMiddleware(applicationContext, locationService),
+                        SearchMiddleware(applicationContext),
+                    ) + EngineMiddleware.create(engine),
+                )
             )
-        )
 
-        val session = SessionUseCases(nekoViewModel.browserStore)
+            val session = SessionUseCases(nekoViewModel.browserStore)
 
-        session.loadUrl("https://gixplay.glixar.com")
-        injectAddonFix(session)
+            session.loadUrl("https://gixplay.glixar.com")
+            injectAddonFix(session)
 
-        setContent {
-            YamanekoTheme {
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    Box {
-                        Scaffold(bottomBar = {
-                            BottomBar(nekoViewModel, Target.SelectedTab, session, ::injectAddonFix)
-                        }) { innerPadding ->
-                            Box(Modifier.padding(innerPadding)) {
-                                WebContent(engine, nekoViewModel.browserStore, Target.SelectedTab)
+            setContent {
+                YamanekoTheme {
+                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                        Box {
+                            Scaffold(bottomBar = {
+                                BottomBar(nekoViewModel, Target.SelectedTab, session, ::injectAddonFix)
+                            }) { innerPadding ->
+                                Box(Modifier.padding(innerPadding)) {
+                                    WebContent(engine, nekoViewModel.browserStore, Target.SelectedTab)
+
+                                    if (errorText != null) {
+                                        ErrorOverlay(errorText!!)
+                                    }
+                                }
                             }
+                            SearchWindow(nekoViewModel, Target.SelectedTab, session, ::injectAddonFix)
                         }
-                        SearchWindow(nekoViewModel, Target.SelectedTab, session, ::injectAddonFix)
                     }
                 }
             }
+
+        } catch (e: Exception) {
+            setContent {
+                ErrorOverlay("Fatal startup error:\n${e.stackTraceToString()}")
+            }
         }
+    }
+}
+
+@Composable
+fun ErrorOverlay(text: String) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.8f))
+            .padding(16.dp)
+    ) {
+        Text(text, color = Color.Red)
     }
 }
 
